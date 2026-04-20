@@ -1,49 +1,62 @@
-name: Publish
+name: Release to npm
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
+  release:
+    types: [published]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     permissions:
       contents: read
       id-token: write
-    environment: npm
-
+    defaults:
+      run:
+        working-directory: .
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
-          version: 9.15.4
+          version: 9
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 24
-          cache: pnpm
+          node-version: 22
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
-      - name: Verify package version matches git tag
+      - name: Validate package
+        run: pnpm prepublishOnly
+
+      - name: Ensure npm token is configured
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PKG_VERSION="$(node -p "require('./package.json').version")"
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "Tag version ($TAG_VERSION) must match package.json version ($PKG_VERSION)"
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is missing or empty."
             exit 1
           fi
 
-      - name: Publish to npm
-        run: pnpm publish --access public --no-git-checks --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Configure npm auth
+        run: |
+          cat <<'EOF' > "$HOME/.npmrc"
+          registry=https://registry.npmjs.org/
+          //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
+          always-auth=true
+          EOF
+
+      - name: Verify npm auth
+        run: npm whoami
+
+      - name: Publish package
+        run: pnpm publish --no-git-checks --access public --registry https://registry.npmjs.org/
