@@ -28,7 +28,6 @@ const manifest: PaperclipPluginManifestV1 = {
     "issues.create",
     "issues.update",
     "issue.comments.create",
-    "issue.attachments.create",
     "jobs.schedule",
     "http.outbound",
     "secrets.read-ref",

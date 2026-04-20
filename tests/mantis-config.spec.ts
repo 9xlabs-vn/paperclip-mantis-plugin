@@ -18,7 +18,7 @@ describe("mergeMantisPluginConfig companyAdvancedSync", () => {
         companyAdvancedSync: {
           co1: { syncAssigneeFilter: "any", defaultPaperclipStatus: null },
         },
-      } as MantisConnectorPluginConfig,
+      } as unknown as MantisConnectorPluginConfig,
     );
     expect(merged.companyAdvancedSync?.co1?.defaultPaperclipStatus).toBeUndefined();
   });

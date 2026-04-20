@@ -666,8 +666,9 @@ export function MantisConnectorSettingsPage(_props: PluginSettingsPageProps): Re
   const pluginIdFromLocation = getPluginIdFromLocation();
   const companyId = hostContext.companyId ?? "";
   const hasCompany = Boolean(companyId);
+  const companyName = (hostContext as { companyName?: string }).companyName;
   const companyScopeLabel =
-    hostContext.companyName?.trim() || hostContext.companyPrefix?.trim() || (companyId ? `${companyId.slice(0, 8)}…` : "");
+    companyName?.trim() || hostContext.companyPrefix?.trim() || (companyId ? `${companyId.slice(0, 8)}…` : "");
 
   const themeMode = useResolvedThemeMode();
   const theme = themeMode === "light" ? LIGHT_PALETTE : DARK_PALETTE;
