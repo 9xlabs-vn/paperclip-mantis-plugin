@@ -10,7 +10,7 @@ This plugin helps operators:
 - map Mantis projects to Paperclip projects,
 - import and update Paperclip issues from Mantis (title, description, status where applicable),
 - import Mantis notes as Paperclip issue comments,
-- import Mantis attachments as Paperclip issue attachments when the API returns inline file content,
+- import Mantis attachments metadata (file upload is disabled in compatibility mode for Paperclip 0.3.x),
 - run scheduled sync (`sync.mantis-issues`) plus manual sync from the project toolbar.
 
 ## What this plugin includes
@@ -26,7 +26,7 @@ This plugin helps operators:
 - Paperclip runtime with plugin support
 - MantisBT **REST API** access and a **Personal Access Token** (or equivalent API token) stored as a Paperclip **secret ref** (`mantisTokenRef`)
 - Network path from the Paperclip host to your Mantis base URL (the host’s outbound HTTP rules apply)
-- For attachment import: the host must allow `issue.attachments.create` for this plugin manifest; very old Paperclip builds without plugin attachments may not support file upload from workers
+- Attachment upload is currently disabled in compatibility mode so this plugin can run on Paperclip `0.3.x`
 
 ## Development
 
@@ -117,5 +117,4 @@ pnpm typecheck && pnpm test
 ## Troubleshooting
 
 - **Sync does nothing**: confirm project mappings exist and the Mantis token is valid for the projects you mapped.
-- **Notes import but attachments do not**: Mantis must return **inline base64** content for files in the REST payload; if the API omits it, the plugin logs a skip and cannot import that file.
-- **Capability / upgrade errors after a Paperclip upgrade**: reinstall or upgrade this package so the manifest matches host expectations (`issue.attachments.create`, etc.).
+- **Notes import but attachments do not**: expected on compatibility builds of this plugin for Paperclip `0.3.x`; file uploads are intentionally skipped.

@@ -26,20 +26,6 @@ import {
 
 const NOTE_FILE_SYNC_CONCURRENCY = 6;
 
-/** Host RPC supports this before published PluginIssuesClient typings always include it. */
-type CreateIssueAttachmentInput = {
-  issueId: string;
-  companyId: string;
-  contentBase64: string;
-  contentType: string;
-  originalFilename: string;
-  issueCommentId?: string | null;
-};
-
-type IssuesClientWithOptionalAttachments = PluginContext["issues"] & {
-  createAttachment?: (input: CreateIssueAttachmentInput) => Promise<unknown>;
-};
-
 function parseReporterIgnoreSet(raw: string | undefined): Set<string> {
   const set = new Set<string>();
   if (!raw?.trim()) return set;
@@ -343,43 +329,17 @@ async function syncMantisFilesForImportedIssue(
     const b64 = file.contentBase64;
     if (!b64?.trim()) {
       skippedMissingInlineContent += 1;
-      ctx.logger.warn("mantis.sync_files.skip_no_inline_content", {
-        mantisIssueId: rec.mantisIssueId,
-        mantisFileId: file.id,
-        filename: file.filename,
-        contentType: file.contentType,
-        size: file.size,
-        hint: "Mantis REST did not include file.content base64; this file cannot be imported by current bridge.",
-      });
-      continue;
     }
-
-    try {
-      const createAttachment = (ctx.issues as IssuesClientWithOptionalAttachments).createAttachment;
-      if (!createAttachment) {
-        throw new Error("Host SDK does not expose issues.createAttachment");
-      }
-      await createAttachment({
-        issueId: rec.paperclipIssueId,
-        companyId: rec.companyId,
-        contentBase64: b64.trim(),
-        contentType: file.contentType,
-        originalFilename: file.filename,
-      });
-      synced.add(file.id);
-      result.attachmentsImported += 1;
-      uploadedThisRun += 1;
-    } catch (e) {
-      failedThisRun += 1;
-      const msg = e instanceof Error ? e.message : String(e);
-      result.errors.push(`Mantis #${rec.mantisIssueId} file ${file.id}: ${msg}`);
-      ctx.logger.warn("mantis.sync_files.create_attachment_failed", {
-        paperclipIssueId: rec.paperclipIssueId,
-        mantisIssueId: rec.mantisIssueId,
-        mantisFileId: file.id,
-        message: msg.slice(0, 300),
-      });
-    }
+    // Compatibility mode for Paperclip 0.3.x: host does not expose attachment capability yet.
+    ctx.logger.info("mantis.sync_files.skipped_attachment_compat_mode", {
+      paperclipIssueId: rec.paperclipIssueId,
+      mantisIssueId: rec.mantisIssueId,
+      mantisFileId: file.id,
+      filename: file.filename,
+      contentType: file.contentType,
+      size: file.size,
+      reason: "Attachment sync is disabled for compatibility with Paperclip core 0.3.x",
+    });
   }
 
   ctx.logger.debug("mantis.sync_files.issue_done", {
