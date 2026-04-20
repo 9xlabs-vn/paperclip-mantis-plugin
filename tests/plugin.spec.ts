@@ -39,4 +39,8 @@ describe("paperclip-mantis-plugin", () => {
     const health = await plugin.definition.onHealth?.();
     expect(health?.status).toBe("ok");
   });
+
+  it("declares attachment capability for media sync", () => {
+    expect(manifest.capabilities).toContain("issue.attachments.create");
+  });
 });

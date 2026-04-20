@@ -341,19 +341,7 @@ async function syncMantisFilesForImportedIssue(
     }
 
     try {
-      const createAttachment = (ctx.issues as {
-        createAttachment?: (input: {
-          issueId: string;
-          companyId: string;
-          contentBase64: string;
-          contentType: string;
-          originalFilename: string;
-        }) => Promise<unknown>;
-      }).createAttachment;
-      if (!createAttachment) {
-        throw new Error("Host SDK does not expose issues.createAttachment");
-      }
-      await createAttachment({
+      await ctx.issues.createAttachment({
         issueId: rec.paperclipIssueId,
         companyId: rec.companyId,
         contentBase64: b64.trim(),
