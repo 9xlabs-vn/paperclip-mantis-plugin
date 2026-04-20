@@ -27,6 +27,7 @@ const manifest = {
     "issues.read",
     "issues.create",
     "issues.update",
+    "issue.attachments.create",
     "issue.comments.create",
     "jobs.schedule",
     "http.outbound",
