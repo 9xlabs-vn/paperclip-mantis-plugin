@@ -1,33 +1,53 @@
-# paperclip-mantis-plugin
+# @9xlabs/paperclip-mantis-plugin
 
-Synchronize MantisBT issues into Paperclip projects, including:
+MantisBT connector plugin for [Paperclip](https://github.com/paperclipai/paperclip).
 
-- issue create/update
-- comment import (Mantis notes -> Paperclip comments)
-- attachment import (Mantis files -> Paperclip issue attachments)
-- scheduled sync + manual sync from the project toolbar button
+**This repository** is the 9xLabs–maintained home for the package (source, release, CI). The Paperclip **core** app and monorepo are upstream and are **not** developed here—install this plugin into any compatible Paperclip instance via npm or a local path.
+
+This plugin helps operators:
+
+- connect a Paperclip instance to MantisBT using API token validation (secret ref),
+- map Mantis projects to Paperclip projects,
+- import and update Paperclip issues from Mantis (title, description, status where applicable),
+- import Mantis notes as Paperclip issue comments,
+- import Mantis attachments as Paperclip issue attachments when the API returns inline file content,
+- run scheduled sync (`sync.mantis-issues`) plus manual sync from the project toolbar.
+
+## What this plugin includes
+
+- Worker + UI entrypoints (`src/worker.ts`, `src/ui/index.tsx`)
+- **Mantis Sync** settings page (base URL, token ref, mappings, advanced per-company options)
+- Project **toolbar** action for on-demand sync
+- Scheduled job: `sync.mantis-issues` (default poll cadence; respects configured sync interval in plugin state)
+- No separate agent tool surface in v1—the value is **sync + UI**; agents are unaffected unless you extend the package later.
 
 ## Requirements
 
-- Node.js 22+
-- pnpm 9+
-- A running Paperclip instance
-- A Mantis API token stored as a Paperclip secret
+- Paperclip runtime with plugin support
+- MantisBT **REST API** access and a **Personal Access Token** (or equivalent API token) stored as a Paperclip **secret ref** (`mantisTokenRef`)
+- Network path from the Paperclip host to your Mantis base URL (the host’s outbound HTTP rules apply)
+- For attachment import: the host must allow `issue.attachments.create` for this plugin manifest; very old Paperclip builds without plugin attachments may not support file upload from workers
 
-## Local development
+## Development
+
+Clone this repo (not the full Paperclip monorepo). Dependencies resolve from the public npm registry (`@paperclipai/plugin-sdk`, etc.).
 
 ```bash
 pnpm install
-pnpm typecheck
+pnpm dev
+pnpm dev:ui
 pnpm test
-pnpm build
-pnpm dev      # watch worker + manifest + UI bundles
-pnpm dev:ui   # local plugin UI dev server
 ```
 
-## Install into Paperclip (local path)
+Useful commands:
 
-After `pnpm build`, install with local package path:
+```bash
+pnpm typecheck
+pnpm build
+pnpm build:rollup
+```
+
+## Install into local Paperclip
 
 ```bash
 curl -X POST http://127.0.0.1:3100/api/plugins/install \
@@ -35,49 +55,67 @@ curl -X POST http://127.0.0.1:3100/api/plugins/install \
   -d '{"packageName":"/absolute/path/to/paperclip-mantis-plugin","isLocalPath":true}'
 ```
 
-Example:
+Or from the CLI (with `PAPERCLIP_API_URL` pointing at your instance):
 
 ```bash
-curl -X POST http://127.0.0.1:3100/api/plugins/install \
-  -H "Content-Type: application/json" \
-  -d '{"packageName":"/Users/norashing/Documents/Work/paperclip/plugins/paperclip-mantis-plugin","isLocalPath":true}'
+pnpm paperclipai plugin install /absolute/path/to/paperclip-mantis-plugin --local
 ```
 
-## Configuration in Paperclip
+From npm (after publish):
 
-Open **Mantis Sync** in plugin settings and configure:
+```bash
+pnpm paperclipai plugin install @9xlabs/paperclip-mantis-plugin
+```
 
-1. `mantisBaseUrl`: Base URL of your Mantis instance
-2. `mantisTokenRef`: Paperclip secret ref that stores a Mantis API token
-3. `syncIntervalMinutes`: Schedule interval for background sync
-4. Project mappings: map Mantis project IDs to Paperclip projects
+## Configuration flow
 
-Optional per-company advanced sync:
+1. Open Paperclip → **Settings** → **Plugins** → **Mantis Sync**
+2. Set **`mantisBaseUrl`** (root URL of your Mantis instance)
+3. Validate and save **`mantisTokenRef`** (Paperclip secret reference for the Mantis API token)
+4. Add **project mappings**: Mantis project → Paperclip project (per company)
+5. Optionally tune **`syncIntervalMinutes`** and per-company advanced options (open-only, assignee filter, default status/agent, ignored reporters)
+6. Save settings; the scheduled job and toolbar action will use the resolved configuration
 
-- sync only open issues
-- assignee filter (`any`, `unassigned`, `me`)
-- default Paperclip status for imported/updated issues
-- default assignee agent
-- ignored reporter names
+## Upgrading
 
-## Release and publish
+Paperclip exposes **`POST /api/plugins/:pluginId/upgrade`** (instance admin) for npm upgrades; the board UI may surface the same flow. You can also install a newer npm version explicitly:
 
-This package is publishable as `@9xlabs/paperclip-mantis-plugin`.
+```bash
+pnpm paperclipai plugin install @9xlabs/paperclip-mantis-plugin@<version>
+```
 
-- `prepublishOnly`: runs typecheck + tests
-- `prepack`: builds distributable bundles
-- published files: `dist/`, `README.md`
+Because npm **forbids re-publishing the same version**, each release needs a **new semver** in `package.json`.
 
-GitHub Actions publish workflow:
+## npm release
 
-- file: `.github/workflows/publish.yml`
-- triggers: manual (`workflow_dispatch`) or GitHub Release `published`
-- requires repo secret: `NPM_TOKEN`
-- publishes with: `pnpm publish --access public`
+Package: `@9xlabs/paperclip-mantis-plugin`
+
+Workflow: `.github/workflows/publish.yml`
+
+- Trigger: GitHub Release `published` or manual `workflow_dispatch`
+- Required repo secret: `NPM_TOKEN`
+- Publish command:
+
+```bash
+pnpm publish --no-git-checks --access public --registry https://registry.npmjs.org/
+```
+
+Prepublish validation:
+
+```bash
+pnpm prepublishOnly
+```
+
+Which runs:
+
+```bash
+pnpm typecheck && pnpm test
+```
+
+`prepack` runs `pnpm build` to emit `dist/` before the tarball is packed.
 
 ## Troubleshooting
 
-- **No comments/attachments imported**: verify plugin capabilities in manifest and re-install plugin if capabilities changed.
-- **Mantis API access errors (401/403)**: recheck token secret value and project-level permissions in Mantis.
-- **Sync ran but no issue updates**: validate project mappings and assignee/open-issue filters in settings.
-- **Attachment not viewable**: verify content type and filename/header handling on Paperclip server.
+- **Sync does nothing**: confirm project mappings exist and the Mantis token is valid for the projects you mapped.
+- **Notes import but attachments do not**: Mantis must return **inline base64** content for files in the REST payload; if the API omits it, the plugin logs a skip and cannot import that file.
+- **Capability / upgrade errors after a Paperclip upgrade**: reinstall or upgrade this package so the manifest matches host expectations (`issue.attachments.create`, etc.).
