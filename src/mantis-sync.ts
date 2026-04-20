@@ -26,6 +26,20 @@ import {
 
 const NOTE_FILE_SYNC_CONCURRENCY = 6;
 
+/** Host RPC supports this before published PluginIssuesClient typings always include it. */
+type CreateIssueAttachmentInput = {
+  issueId: string;
+  companyId: string;
+  contentBase64: string;
+  contentType: string;
+  originalFilename: string;
+  issueCommentId?: string | null;
+};
+
+type IssuesClientWithOptionalAttachments = PluginContext["issues"] & {
+  createAttachment?: (input: CreateIssueAttachmentInput) => Promise<unknown>;
+};
+
 function parseReporterIgnoreSet(raw: string | undefined): Set<string> {
   const set = new Set<string>();
   if (!raw?.trim()) return set;
@@ -341,7 +355,11 @@ async function syncMantisFilesForImportedIssue(
     }
 
     try {
-      await ctx.issues.createAttachment({
+      const createAttachment = (ctx.issues as IssuesClientWithOptionalAttachments).createAttachment;
+      if (!createAttachment) {
+        throw new Error("Host SDK does not expose issues.createAttachment");
+      }
+      await createAttachment({
         issueId: rec.paperclipIssueId,
         companyId: rec.companyId,
         contentBase64: b64.trim(),

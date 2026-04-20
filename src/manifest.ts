@@ -11,7 +11,9 @@ const MANIFEST_VERSION =
   || process.env.npm_package_version?.trim()
   || "0.1.0";
 
-const manifest: PaperclipPluginManifestV1 = {
+// Published @paperclipai/plugin-sdk types may lag behind the host; `issue.attachments.create`
+// is valid at runtime on current Paperclip hosts but not always in the npm type union yet.
+const manifest = {
   id: "paperclip-mantis-plugin",
   apiVersion: 1,
   version: MANIFEST_VERSION,
@@ -104,6 +106,6 @@ const manifest: PaperclipPluginManifestV1 = {
       },
     ],
   },
-};
+} as PaperclipPluginManifestV1;
 
 export default manifest;
