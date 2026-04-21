@@ -4,7 +4,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as { version?: unknown };
-const SCHEDULE_TICK_CRON = "*/5 * * * *";
+const SCHEDULE_TICK_CRON = "*/15 * * * *";
 const MANIFEST_VERSION =
   process.env.PLUGIN_VERSION?.trim()
   || (typeof packageJson.version === "string" && packageJson.version.trim())
@@ -27,8 +27,8 @@ const manifest = {
     "issues.read",
     "issues.create",
     "issues.update",
-    "issue.attachments.create",
     "issue.comments.create",
+    "issue.documents.write",
     "jobs.schedule",
     "http.outbound",
     "secrets.read-ref",

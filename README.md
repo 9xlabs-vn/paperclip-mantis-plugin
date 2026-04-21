@@ -10,7 +10,7 @@ This plugin helps operators:
 - map Mantis projects to Paperclip projects,
 - import and update Paperclip issues from Mantis (title, description, status where applicable),
 - import Mantis notes as Paperclip issue comments,
-- import Mantis attachments metadata (file upload is disabled in compatibility mode for Paperclip 0.3.x),
+- index Mantis media metadata into issue document `mantis-media-index` (file upload is disabled in compatibility mode for Paperclip 0.3.x),
 - run scheduled sync (`sync.mantis-issues`) plus manual sync from the project toolbar.
 
 ## What this plugin includes
@@ -27,6 +27,7 @@ This plugin helps operators:
 - MantisBT **REST API** access and a **Personal Access Token** (or equivalent API token) stored as a Paperclip **secret ref** (`mantisTokenRef`)
 - Network path from the Paperclip host to your Mantis base URL (the host’s outbound HTTP rules apply)
 - Attachment upload is currently disabled in compatibility mode so this plugin can run on Paperclip `0.3.x`
+- Media metadata is synchronized into issue document key `mantis-media-index` so agents can consume it through the documents API/SDK
 
 ## Development
 
@@ -117,4 +118,4 @@ pnpm typecheck && pnpm test
 ## Troubleshooting
 
 - **Sync does nothing**: confirm project mappings exist and the Mantis token is valid for the projects you mapped.
-- **Notes import but attachments do not**: expected on compatibility builds of this plugin for Paperclip `0.3.x`; file uploads are intentionally skipped.
+- **Notes import but attachments do not**: expected on compatibility builds of this plugin for Paperclip `0.3.x`; file uploads are intentionally skipped and media is indexed into `mantis-media-index`.

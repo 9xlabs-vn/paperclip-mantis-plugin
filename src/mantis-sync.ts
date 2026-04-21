@@ -14,6 +14,7 @@ import {
 } from "./mantis-config.js";
 import {
   buildImportDescription,
+  buildMantisIssueViewUrl,
   fetchMantisIssueFiles,
   fetchMantisIssueNotes,
   formatMantisNotePaperclipBody,
@@ -21,10 +22,18 @@ import {
   isMantisIssueFixedStatus,
   listProjectIssues,
   mapMantisStatusToPaperclip,
+  updateMantisIssueStatusToFixed,
+  type MantisIssueFileNormalized,
   type MantisIssueNormalized,
 } from "./mantis-http.js";
 
 const NOTE_FILE_SYNC_CONCURRENCY = 6;
+const MANTIS_MEDIA_INDEX_DOCUMENT_KEY = "mantis-media-index";
+const MANTIS_MEDIA_INDEX_DOCUMENT_TITLE = "Mantis Media Index";
+const ACTIVE_PAPERCLIP_EXECUTION_STATUSES = new Set<Issue["status"]>([
+  "in_progress",
+  "in_review",
+]);
 
 function parseReporterIgnoreSet(raw: string | undefined): Set<string> {
   const set = new Set<string>();
@@ -65,6 +74,26 @@ export function effectiveStatusForMantisSync(
   if (!paperclipStatusRequiresAssignee(desired)) return desired;
   if (adv.defaultAssigneeAgentId?.trim()) return desired;
   return "todo";
+}
+
+function shouldKeepActivePaperclipStatus(
+  currentStatus: Issue["status"],
+  mappedMantisStatus: Issue["status"],
+): boolean {
+  if (mappedMantisStatus !== "in_progress") return false;
+  return ACTIVE_PAPERCLIP_EXECUTION_STATUSES.has(currentStatus);
+}
+
+/** Exported for tests — choose status for existing imported issues without clobbering active Paperclip execution states. */
+export function resolveExistingIssueStatusForMantisSync(
+  adv: MantisCompanyAdvancedSync,
+  currentStatus: Issue["status"],
+  mappedMantisStatus: Issue["status"],
+): Issue["status"] {
+  const statusInput = shouldKeepActivePaperclipStatus(currentStatus, mappedMantisStatus)
+    ? currentStatus
+    : mappedMantisStatus;
+  return effectiveStatusForMantisSync(adv, statusInput);
 }
 
 function syncAcceptsIssue(
@@ -231,6 +260,57 @@ function sortSyncedMantisFileIds(ids: Set<number>): number[] {
   return [...ids].sort((a, b) => a - b);
 }
 
+type MantisMediaIndexEntry = {
+  fileId: number;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  hasInlineContent: boolean;
+};
+
+function formatBytes(sizeBytes: number): string {
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  const kib = sizeBytes / 1024;
+  if (kib < 1024) return `${kib.toFixed(1)} KiB`;
+  const mib = kib / 1024;
+  return `${mib.toFixed(1)} MiB`;
+}
+
+function toMantisMediaIndexEntries(files: readonly MantisIssueFileNormalized[]): MantisMediaIndexEntry[] {
+  return files.map((file) => ({
+    fileId: file.id,
+    filename: file.filename,
+    contentType: file.contentType,
+    sizeBytes: file.size,
+    hasInlineContent: Boolean(file.contentBase64?.trim()),
+  }));
+}
+
+function renderMantisMediaIndexDocumentBody(
+  baseUrl: string,
+  rec: MantisImportRecord,
+  entries: readonly MantisMediaIndexEntry[],
+): string {
+  const issueUrl = buildMantisIssueViewUrl(baseUrl, rec.mantisIssueId);
+  const generatedAt = new Date().toISOString();
+  const lines: string[] = [
+    "# Mantis media index",
+    "",
+    `- Source Mantis issue: [#${rec.mantisIssueId}](${issueUrl})`,
+    `- Synced at: ${generatedAt}`,
+    `- Total files: ${entries.length}`,
+    "",
+    "| Mantis file id | Filename | MIME type | Size | Inline content |",
+    "| --- | --- | --- | --- | --- |",
+  ];
+  for (const entry of entries) {
+    lines.push(
+      `| ${entry.fileId} | ${entry.filename.replace(/\|/g, "\\|")} | ${entry.contentType} | ${formatBytes(entry.sizeBytes)} | ${entry.hasInlineContent ? "yes" : "no"} |`,
+    );
+  }
+  return lines.join("\n");
+}
+
 async function syncMantisNotesForImportedIssue(
   ctx: PluginContext,
   baseUrl: string,
@@ -316,7 +396,8 @@ async function syncMantisFilesForImportedIssue(
   }
 
   const synced = new Set(rec.syncedMantisFileIds ?? []);
-  let uploadedThisRun = 0;
+  const newFileIds = files.filter((file) => !synced.has(file.id)).map((file) => file.id);
+  let indexedThisRun = 0;
   let skippedAlreadySynced = 0;
   let skippedMissingInlineContent = 0;
   let failedThisRun = 0;
@@ -326,19 +407,46 @@ async function syncMantisFilesForImportedIssue(
       skippedAlreadySynced += 1;
       continue;
     }
-    const b64 = file.contentBase64;
-    if (!b64?.trim()) {
+    if (!file.contentBase64?.trim()) {
       skippedMissingInlineContent += 1;
     }
-    // Compatibility mode for Paperclip 0.3.x: host does not expose attachment capability yet.
-    ctx.logger.info("mantis.sync_files.skipped_attachment_compat_mode", {
+  }
+
+  try {
+    const entries = toMantisMediaIndexEntries(files);
+    const body = renderMantisMediaIndexDocumentBody(baseUrl, rec, entries);
+    await ctx.issues.documents.upsert({
+      issueId: rec.paperclipIssueId,
+      key: MANTIS_MEDIA_INDEX_DOCUMENT_KEY,
+      title: MANTIS_MEDIA_INDEX_DOCUMENT_TITLE,
+      format: "markdown",
+      body,
+      companyId: rec.companyId,
+      changeSummary:
+        newFileIds.length > 0
+          ? `Indexed ${newFileIds.length} new Mantis file(s).`
+          : "Refreshed Mantis media index.",
+    });
+    indexedThisRun = newFileIds.length;
+    for (const fileId of newFileIds) synced.add(fileId);
+    if (newFileIds.length > 0) {
+      await ctx.issues.createComment(
+        rec.paperclipIssueId,
+        [
+          `Mantis media index updated with ${newFileIds.length} new file(s).`,
+          `See issue document \`${MANTIS_MEDIA_INDEX_DOCUMENT_KEY}\` for the latest file list.`,
+        ].join("\n"),
+        rec.companyId,
+      );
+    }
+  } catch (e) {
+    failedThisRun += 1;
+    const msg = e instanceof Error ? e.message : String(e);
+    result.errors.push(`Mantis #${rec.mantisIssueId} media index: ${msg}`);
+    ctx.logger.warn("mantis.sync_files.media_index_upsert_failed", {
       paperclipIssueId: rec.paperclipIssueId,
       mantisIssueId: rec.mantisIssueId,
-      mantisFileId: file.id,
-      filename: file.filename,
-      contentType: file.contentType,
-      size: file.size,
-      reason: "Attachment sync is disabled for compatibility with Paperclip core 0.3.x",
+      message: msg.slice(0, 300),
     });
   }
 
@@ -346,7 +454,7 @@ async function syncMantisFilesForImportedIssue(
     paperclipIssueId: rec.paperclipIssueId,
     mantisIssueId: rec.mantisIssueId,
     fetchedFiles: files.length,
-    uploadedThisRun,
+    indexedThisRun,
     skippedAlreadySynced,
     skippedMissingInlineContent,
     failedThisRun,
@@ -356,7 +464,7 @@ async function syncMantisFilesForImportedIssue(
     paperclipIssueId: rec.paperclipIssueId,
     mantisIssueId: rec.mantisIssueId,
     fetchedFiles: files.length,
-    uploadedThisRun,
+    indexedThisRun,
     skippedAlreadySynced,
     skippedMissingInlineContent,
     failedThisRun,
@@ -367,6 +475,7 @@ async function syncMantisFilesForImportedIssue(
   if (sorted.length === prev.length && sorted.every((v, i) => v === prev[i])) {
     return rec;
   }
+  result.attachmentsImported += indexedThisRun;
   return { ...rec, syncedMantisFileIds: sorted };
 }
 
@@ -434,7 +543,7 @@ export async function performMantisSync(
           }
 
           const paperclipStatus = mapMantisStatusToPaperclip(mi.statusName);
-          const body = buildImportDescription(baseUrl, mi.id, mi.descriptionText);
+          const body = buildImportDescription(baseUrl, mi.id, mi.summary, mi.descriptionText);
           const rawCreatedStatus: Issue["status"] = adv.defaultPaperclipStatus ?? paperclipStatus;
           const createdIssueStatus = effectiveStatusForMantisSync(adv, rawCreatedStatus);
 
@@ -452,10 +561,29 @@ export async function performMantisSync(
               continue;
             }
 
-            const targetStatus = effectiveStatusForMantisSync(
-              adv,
-              adv.defaultPaperclipStatus ?? paperclipStatus,
-            );
+            const shouldPushDoneToMantisFixed =
+              current.status === "done" && !isMantisIssueFixedStatus(mi.statusName);
+            if (shouldPushDoneToMantisFixed) {
+              try {
+                await updateMantisIssueStatusToFixed(ctx, baseUrl, opts.tokenRef, mi.id);
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                result.errors.push(`Mantis #${mi.id} status->fixed: ${msg}`);
+                ctx.logger.warn("mantis.sync.push_done_to_mantis_failed", {
+                  mantisIssueId: mi.id,
+                  paperclipIssueId: existing.paperclipIssueId,
+                  message: msg.slice(0, 300),
+                });
+              }
+            }
+
+            const targetStatus = shouldPushDoneToMantisFixed
+              ? "done"
+              : resolveExistingIssueStatusForMantisSync(
+                adv,
+                current.status,
+                paperclipStatus,
+              );
             const titleChanged = current.title !== mi.summary;
             const descChanged = (current.description ?? "").trim() !== body.trim();
             const statusChanged = current.status !== targetStatus;

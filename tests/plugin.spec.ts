@@ -40,7 +40,7 @@ describe("paperclip-mantis-plugin", () => {
     expect(health?.status).toBe("ok");
   });
 
-  it("declares attachment capability for media sync", () => {
-    expect(manifest.capabilities).toContain("issue.attachments.create");
+  it("declares document write capability for media index sync", () => {
+    expect(manifest.capabilities).toContain("issue.documents.write");
   });
 });

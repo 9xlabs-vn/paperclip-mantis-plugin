@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildImportDescription,
   extractFirstIssueFromIssuesGetResponse,
   formatMantisNotePaperclipBody,
   normalizeMantisNotesFromIssuePayload,
+  updateMantisIssueStatusToFixed,
 } from "../src/mantis-http.js";
 
 describe("Mantis issue notes (REST)", () => {
@@ -90,5 +92,49 @@ describe("Mantis issue notes (REST)", () => {
     expect(s).toContain("note #5");
     expect(s).toContain("_dev_");
     expect(s).toContain("Hello");
+  });
+
+  it("includes Mantis metadata in imported description", () => {
+    const description = buildImportDescription(
+      "https://mantis.example.com",
+      12456,
+      "Fix SSO callback",
+      "Imported body",
+    );
+    expect(description).toContain("- Mantis ID: 12456");
+    expect(description).toContain("- Mantis URL: https://mantis.example.com/view.php?id=12456");
+    expect(description).toContain("- Mantis Title: Fix SSO callback");
+    expect(description).toContain("Imported body");
+  });
+
+  it("updates Mantis issue to fixed status", async () => {
+    const calls: Array<{ url: string; method?: string; body?: string }> = [];
+    const ctx = {
+      secrets: {
+        resolve: async () => "mantis-token",
+      },
+      http: {
+        fetch: async (url: string, init?: RequestInit) => {
+          calls.push({
+            url,
+            method: init?.method,
+            body: typeof init?.body === "string" ? init.body : undefined,
+          });
+          return new Response("{}", { status: 200 });
+        },
+      },
+    } as unknown as Parameters<typeof updateMantisIssueStatusToFixed>[0];
+
+    await updateMantisIssueStatusToFixed(
+      ctx,
+      "https://mantis.example.com",
+      "secret:mantis-token",
+      12345,
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://mantis.example.com/api/rest/issues/12345");
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.body).toContain('"status":{"name":"fixed"}');
   });
 });

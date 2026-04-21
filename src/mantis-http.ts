@@ -18,12 +18,23 @@ export function buildMantisIssueViewUrl(baseUrl: string, mantisIssueId: number):
   return `${base}/view.php?id=${mantisIssueId}`;
 }
 
-export function buildImportDescription(baseUrl: string, mantisIssueId: number, body: string): string {
+export function buildImportDescription(
+  baseUrl: string,
+  mantisIssueId: number,
+  mantisTitle: string,
+  body: string,
+): string {
   const url = buildMantisIssueViewUrl(baseUrl, mantisIssueId);
   const marker = `${MANTIS_MARKER_PREFIX}${url}${MANTIS_MARKER_SUFFIX}`;
   const trimmed = body.trim();
-  if (!trimmed) return marker;
-  return `${trimmed}\n\n${marker}`;
+  const title = mantisTitle.trim();
+  const metadataLines = [
+    "- Mantis ID: " + String(mantisIssueId),
+    "- Mantis URL: " + url,
+    "- Mantis Title: " + title,
+  ];
+  if (!trimmed) return `${metadataLines.join("\n")}\n\n${marker}`;
+  return `${metadataLines.join("\n")}\n\n${trimmed}\n\n${marker}`;
 }
 
 export function extractIssuesArray(data: unknown): unknown[] {
@@ -591,7 +602,7 @@ export async function mantisApiFetch(
   ctx: PluginContext,
   baseUrl: string,
   token: string,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PATCH",
   pathWithLeadingSlash: string,
   init?: RequestInit,
 ): Promise<Response> {
@@ -619,7 +630,7 @@ export async function mantisApiJson<T>(
   ctx: PluginContext,
   baseUrl: string,
   tokenRef: string,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PATCH",
   path: string,
   init?: RequestInit,
 ): Promise<T> {
@@ -647,6 +658,22 @@ export async function mantisApiJson<T>(
   }
 
   return parsed as T;
+}
+
+export async function updateMantisIssueStatusToFixed(
+  ctx: PluginContext,
+  baseUrl: string,
+  tokenRef: string,
+  mantisIssueId: number,
+): Promise<void> {
+  const idStr = encodeURIComponent(String(mantisIssueId));
+  const path = `/api/rest/issues/${idStr}`;
+  await mantisApiJson<unknown>(ctx, baseUrl, tokenRef, "PATCH", path, {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      status: { name: "fixed" },
+    }),
+  });
 }
 
 /** Best-effort label from `/api/rest/users/me` for validation UI (name + email when both exist). */
