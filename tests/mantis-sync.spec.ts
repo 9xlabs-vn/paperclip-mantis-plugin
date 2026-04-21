@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   effectiveStatusForMantisSync,
+  isMantisReopenTransition,
+  resolveTargetStatusAfterDonePush,
   resolveExistingIssueStatusForMantisSync,
 } from "../src/mantis-sync.js";
 import { mapMantisStatusToPaperclip } from "../src/mantis-http.js";
@@ -65,5 +67,58 @@ describe("resolveExistingIssueStatusForMantisSync", () => {
       "in_progress",
     )).toBe("todo");
     expect(resolveExistingIssueStatusForMantisSync({}, "todo", "done")).toBe("done");
+  });
+});
+
+describe("resolveTargetStatusAfterDonePush", () => {
+  it("keeps done when done->fixed push succeeded in same sync cycle", () => {
+    expect(resolveTargetStatusAfterDonePush(
+      { defaultPaperclipStatus: "todo" },
+      "done",
+      "todo",
+      true,
+    )).toBe("done");
+    expect(resolveTargetStatusAfterDonePush(
+      { defaultPaperclipStatus: "todo" },
+      "done",
+      "in_progress",
+      true,
+    )).toBe("done");
+  });
+
+  it("falls back to normal status mapping when no done->fixed push happened", () => {
+    expect(resolveTargetStatusAfterDonePush(
+      { defaultPaperclipStatus: "todo" },
+      "done",
+      "in_progress",
+      false,
+    )).toBe("todo");
+  });
+
+  it("moves done back to todo when Mantis reopen-to-assigned is detected", () => {
+    expect(resolveTargetStatusAfterDonePush(
+      { defaultPaperclipStatus: "todo" },
+      "done",
+      "in_progress",
+      true,
+      true,
+    )).toBe("todo");
+    expect(resolveTargetStatusAfterDonePush(
+      {},
+      "done",
+      "done",
+      false,
+      true,
+    )).toBe("todo");
+  });
+});
+
+describe("isMantisReopenTransition", () => {
+  it("detects fixed -> assigned transitions only", () => {
+    expect(isMantisReopenTransition("fixed", "assigned")).toBe(true);
+    expect(isMantisReopenTransition(" fixed ", " assigned ")).toBe(true);
+    expect(isMantisReopenTransition("resolved", "assigned")).toBe(false);
+    expect(isMantisReopenTransition("fixed", "new")).toBe(false);
+    expect(isMantisReopenTransition(undefined, "assigned")).toBe(false);
   });
 });

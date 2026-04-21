@@ -155,6 +155,8 @@ export interface MantisImportRecord {
   paperclipProjectId: string;
   companyId: string;
   createdAt: string;
+  /** Last normalized Mantis status name observed by sync (used for transition-based reopen detection). */
+  lastMantisStatusName?: string;
   /** Last known `updated_at` value from Mantis issue payload for incremental sync gating. */
   lastMantisIssueUpdatedAt?: string;
   /** Mantis note ids already posted as Paperclip comments (dedupe on re-sync). */

@@ -96,6 +96,33 @@ export function resolveExistingIssueStatusForMantisSync(
   return effectiveStatusForMantisSync(adv, statusInput);
 }
 
+function isMantisReopenedAssignedStatus(statusName: string): boolean {
+  return /\bassigned\b/i.test(statusName.trim());
+}
+
+export function isMantisReopenTransition(
+  previousStatusName: string | undefined,
+  currentStatusName: string,
+): boolean {
+  const prev = (previousStatusName ?? "").trim().toLowerCase();
+  const current = currentStatusName.trim().toLowerCase();
+  if (!prev || !current) return false;
+  return /\bfixed\b/.test(prev) && isMantisReopenedAssignedStatus(current);
+}
+
+/** Exported for tests — avoid status ping-pong after successful Paperclip done -> Mantis fixed push. */
+export function resolveTargetStatusAfterDonePush(
+  adv: MantisCompanyAdvancedSync,
+  currentStatus: Issue["status"],
+  mappedMantisStatus: Issue["status"],
+  forceKeepPaperclipDone: boolean,
+  forceReopenPaperclipToTodo = false,
+): Issue["status"] {
+  if (forceReopenPaperclipToTodo) return "todo";
+  if (forceKeepPaperclipDone) return "done";
+  return resolveExistingIssueStatusForMantisSync(adv, currentStatus, mappedMantisStatus);
+}
+
 function syncAcceptsIssue(
   mi: MantisIssueNormalized,
   adv: MantisCompanyAdvancedSync,
@@ -145,6 +172,10 @@ async function loadRegistry(ctx: PluginContext): Promise<MantisImportRegistry> {
       typeof r.paperclipProjectId === "string" ? r.paperclipProjectId.trim() : "";
     const companyId = typeof r.companyId === "string" ? r.companyId.trim() : "";
     const createdAt = typeof r.createdAt === "string" ? r.createdAt : new Date().toISOString();
+    const lastMantisStatusName =
+      typeof r.lastMantisStatusName === "string" && r.lastMantisStatusName.trim()
+        ? r.lastMantisStatusName.trim().toLowerCase()
+        : undefined;
     const lastMantisIssueUpdatedAt =
       typeof r.lastMantisIssueUpdatedAt === "string" && r.lastMantisIssueUpdatedAt.trim()
         ? r.lastMantisIssueUpdatedAt
@@ -173,6 +204,7 @@ async function loadRegistry(ctx: PluginContext): Promise<MantisImportRegistry> {
       paperclipProjectId,
       companyId,
       createdAt,
+      ...(lastMantisStatusName ? { lastMantisStatusName } : {}),
       ...(lastMantisIssueUpdatedAt ? { lastMantisIssueUpdatedAt } : {}),
       ...(syncedMantisNoteIds.length > 0 ? { syncedMantisNoteIds } : {}),
       ...(syncedMantisFileIds.length > 0 ? { syncedMantisFileIds } : {}),
@@ -537,6 +569,36 @@ export async function performMantisSync(
 
       for (const mi of issues) {
         try {
+          const lookupKey = recordLookupKey(companyId, mapping.paperclipProjectId, mi.id);
+          const existing = registryLookup.get(lookupKey);
+          const observedMantisStatusName = mi.statusName.trim().toLowerCase();
+          let finalMantisStatusName = observedMantisStatusName;
+          let forceKeepPaperclipDone = false;
+          let forceReopenPaperclipToTodo = false;
+          if (existing) {
+            const current = await ctx.issues.get(existing.paperclipIssueId, companyId);
+            if (current && current.status === "done" && isMantisReopenTransition(
+              existing.lastMantisStatusName,
+              observedMantisStatusName,
+            )) {
+              forceReopenPaperclipToTodo = true;
+            } else if (current && current.status === "done" && !isMantisIssueFixedStatus(mi.statusName)) {
+              try {
+                await updateMantisIssueStatusToFixed(ctx, baseUrl, opts.tokenRef, mi.id);
+                forceKeepPaperclipDone = true;
+                finalMantisStatusName = "fixed";
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                result.errors.push(`Mantis #${mi.id} status->fixed: ${msg}`);
+                ctx.logger.warn("mantis.sync.push_done_to_mantis_failed", {
+                  mantisIssueId: mi.id,
+                  paperclipIssueId: existing.paperclipIssueId,
+                  message: msg.slice(0, 300),
+                });
+              }
+            }
+          }
+
           if (!syncAcceptsIssue(mi, adv, opts.resolvedConfig, ignoreReporter)) {
             result.skipped += 1;
             continue;
@@ -546,9 +608,6 @@ export async function performMantisSync(
           const body = buildImportDescription(baseUrl, mi.id, mi.summary, mi.descriptionText);
           const rawCreatedStatus: Issue["status"] = adv.defaultPaperclipStatus ?? paperclipStatus;
           const createdIssueStatus = effectiveStatusForMantisSync(adv, rawCreatedStatus);
-
-          const lookupKey = recordLookupKey(companyId, mapping.paperclipProjectId, mi.id);
-          const existing = registryLookup.get(lookupKey);
 
           if (existing) {
             const current = await ctx.issues.get(existing.paperclipIssueId, companyId);
@@ -561,29 +620,13 @@ export async function performMantisSync(
               continue;
             }
 
-            const shouldPushDoneToMantisFixed =
-              current.status === "done" && !isMantisIssueFixedStatus(mi.statusName);
-            if (shouldPushDoneToMantisFixed) {
-              try {
-                await updateMantisIssueStatusToFixed(ctx, baseUrl, opts.tokenRef, mi.id);
-              } catch (e) {
-                const msg = e instanceof Error ? e.message : String(e);
-                result.errors.push(`Mantis #${mi.id} status->fixed: ${msg}`);
-                ctx.logger.warn("mantis.sync.push_done_to_mantis_failed", {
-                  mantisIssueId: mi.id,
-                  paperclipIssueId: existing.paperclipIssueId,
-                  message: msg.slice(0, 300),
-                });
-              }
-            }
-
-            const targetStatus = shouldPushDoneToMantisFixed
-              ? "done"
-              : resolveExistingIssueStatusForMantisSync(
-                adv,
-                current.status,
-                paperclipStatus,
-              );
+            const targetStatus = resolveTargetStatusAfterDonePush(
+              adv,
+              current.status,
+              paperclipStatus,
+              forceKeepPaperclipDone,
+              forceReopenPaperclipToTodo,
+            );
             const titleChanged = current.title !== mi.summary;
             const descChanged = (current.description ?? "").trim() !== body.trim();
             const statusChanged = current.status !== targetStatus;
@@ -615,6 +658,7 @@ export async function performMantisSync(
               mantisProjectId: mapping.mantisProjectId,
               paperclipProjectId: mapping.paperclipProjectId,
               companyId,
+              lastMantisStatusName: finalMantisStatusName,
             });
           } else {
             const useAutoMappedStatus = adv.defaultPaperclipStatus === undefined;
@@ -641,6 +685,7 @@ export async function performMantisSync(
               paperclipProjectId: mapping.paperclipProjectId,
               companyId,
               createdAt: new Date().toISOString(),
+              lastMantisStatusName: finalMantisStatusName,
             });
             result.created += 1;
           }
